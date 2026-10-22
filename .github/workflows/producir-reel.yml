@@ -1,0 +1,55 @@
+name: Producir Reel MP4 automaticamente
+on:
+  workflow_dispatch:
+    inputs:
+      image_file:
+        description: "Nombre de archivo JPG en carpeta instagram (ya alojado)"
+        required: true
+        default: "photo_2026-10-21_22-33-11.jpg"
+        type: string
+      output_name:
+        description: "Nombre MP4 para carpeta reels"
+        required: true
+        default: "reel-editorial.mp4"
+        type: string
+permissions:
+  contents: write
+jobs:
+  producir:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Instalar FFmpeg
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
+      - name: Crear video y musica instrumental sintetica
+        env:
+          SOURCE: ${{ inputs.image_file }}
+          OUTPUT: ${{ inputs.output_name }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import os, pathlib, re
+          source=os.environ["SOURCE"]
+          output=os.environ["OUTPUT"]
+          if not re.fullmatch(r"[a-zA-Z0-9_-]+\.jpe?g",source) or not re.fullmatch(r"[a-zA-Z0-9_-]+\.mp4",output):
+              raise SystemExit("Nombres inválidos")
+          if not pathlib.Path("instagram",source).is_file():
+              raise SystemExit("Falta el JPG de origen en instagram/")
+          PY
+          mkdir -p reels
+          ffmpeg -hide_banner -loglevel error -y \
+            -loop 1 -framerate 30 -i "instagram/$SOURCE" \
+            -f lavfi -i "aevalsrc=0.24*sin(2*PI*55*t)*exp(-22*mod(t\\,0.625))+0.10*sin(2*PI*180*t)*exp(-50*mod(t\\,0.3125))+0.055*(random(0)*2-1)*exp(-70*mod(t\\,0.625)):s=44100" \
+            -t 15 -filter_complex "[0:v]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,zoompan=z='min(zoom+0.00028,1.06)':d=1:s=1080x1920:fps=30,format=yuv420p[v];[1:a]volume=0.55,afade=t=in:st=0:d=0.4,afade=t=out:st=14:d=1[a]" \
+            -map "[v]" -map "[a]" -c:v libx264 -preset fast -crf 24 -pix_fmt yuv420p \
+            -r 30 -c:a aac -b:a 160k -movflags +faststart "reels/$OUTPUT"
+          test -s "reels/$OUTPUT"
+      - name: Guardar MP4 en repositorio publico
+        env:
+          OUTPUT: ${{ inputs.output_name }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add "reels/$OUTPUT"
+          git commit -m "Generar reel de 15 segundos: $OUTPUT" || exit 0
+          git push
